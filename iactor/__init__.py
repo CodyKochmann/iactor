@@ -2,7 +2,7 @@
 # @Author: Cody Kochmann
 # @Date:   2018-02-28 14:11:34
 # @Last Modified 2018-02-28
-# @Last Modified time: 2018-02-28 14:42:32
+# @Last Modified time: 2018-02-28 16:50:31
 
 '''
 My take on how actors should be implemented for coroutines and functions.
@@ -39,9 +39,9 @@ class Actor(object):
 
     send = __call__ # this is to support coroutine syntax
 
-class ActorManager(dict):
+class ActorManager(object):
     def __init__(self, thread_count=8, logger=warning):
-        dict.__init__(self)
+        self.active_tasks = 0
         self.thread_count = thread_count
         self.logger = logger
         self.pools = [ThreadPool(self.threads_per_pool) for _ in range(self.pool_count)]
@@ -66,26 +66,24 @@ class ActorManager(dict):
         return int(self.thread_count/self.threads_per_pool)
 
     @staticmethod
-    def _run(fn, logger, _hash):
+    def _run(fn, logger):
         try:
-            return fn(), _hash
+            return fn()
         except Exception as ex:
             logger(ex)
-            return None, _hash
+            return None
 
     def _remove_task(self, task_output):
-        actual_output, _hash = task_output
-        del self[_hash]
-        return actual_output
+        self.active_tasks -= 1
+        return task_output
 
     def __call__(self, fn, pool):
-        _hash = hash(fn) * hash(pool)
-        self[_hash] = pool.apply_async(
+        self.active_tasks += 1
+        return pool.apply_async(
             self._run,
-            (fn, self.logger, _hash),
+            (fn, self.logger),
             callback=self._remove_task
         )
-        return self[_hash]
 
     @property
     def next_set_of_pools(self):

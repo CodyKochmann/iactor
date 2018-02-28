@@ -1,2 +1,3 @@
 # iactor
-My take on how actors should be implemented for coroutines and functions.
+
+High performance actor model for python functions and coroutines.

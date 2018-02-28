@@ -7,7 +7,7 @@
 from distutils.core import setup
 import sys
 
-version = '2018.2.28'
+version = '2018.2.28.1'
 
 setup(
   name = 'iactor',

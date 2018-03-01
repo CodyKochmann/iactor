@@ -1,8 +1,8 @@
 # -*- coding: utf-8 -*-
 # @Author: Cody Kochmann
 # @Date:   2018-02-28 14:11:34
-# @Last Modified 2018-02-28
-# @Last Modified time: 2018-02-28 16:50:31
+# @Last Modified 2018-03-01
+# @Last Modified time: 2018-03-01 11:01:50
 
 '''
 My take on how actors should be implemented for coroutines and functions.
@@ -16,6 +16,7 @@ from collections import deque
 from math import sqrt
 import atexit
 from time import sleep
+from threading import Lock
 from inspect import isgenerator, isgeneratorfunction
 from generators import window, started
 from strict_functions import never_parallel
@@ -42,11 +43,10 @@ class Actor(object):
 class ActorManager(object):
     def __init__(self, thread_count=8, logger=warning):
         self.active_tasks = 0
+        self._active_tasks_lock = Lock()
         self.thread_count = thread_count
         self.logger = logger
         self.pools = [ThreadPool(self.threads_per_pool) for _ in range(self.pool_count)]
-        #for p in self.pools:
-        #    p._taskqueue.maxsize = 2
         self.pool_selector = window(
             cycle(self.pools),
             self.pools_per_actor
@@ -74,11 +74,13 @@ class ActorManager(object):
             return None
 
     def _remove_task(self, task_output):
-        self.active_tasks -= 1
+        with self._active_tasks_lock:
+            self.active_tasks -= 1
         return task_output
 
     def __call__(self, fn, pool):
-        self.active_tasks += 1
+        with self._active_tasks_lock:
+            self.active_tasks += 1
         return pool.apply_async(
             self._run,
             (fn, self.logger),
@@ -94,8 +96,10 @@ class ActorManager(object):
             p.terminate()
 
     def finish_tasks(self):
-        while len(self):
+        while 0 < self.active_tasks:
+            print(self.active_tasks)
             sleep(0.05)
+
         self.terminate()
 
     def actor(self, fn):
@@ -161,7 +165,6 @@ if __name__ == '__main__':
 
     for p in printers:
         for i in range(10):
-            sleep(0.005)
             p(i)
             p.send(i)
 

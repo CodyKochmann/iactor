@@ -2,7 +2,7 @@
 # @Author: Cody Kochmann
 # @Date:   2018-02-28 14:11:34
 # @Last Modified 2018-03-01
-# @Last Modified time: 2018-03-01 11:01:50
+# @Last Modified time: 2018-03-01 11:07:07
 
 '''
 My take on how actors should be implemented for coroutines and functions.
@@ -21,6 +21,7 @@ from inspect import isgenerator, isgeneratorfunction
 from generators import window, started
 from strict_functions import never_parallel
 
+__all__ = ['ActorManager']
 
 class Actor(object):
     __slots__ = ['fn', 'pools', 'manager']

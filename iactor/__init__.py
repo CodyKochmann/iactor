@@ -1,23 +1,25 @@
 # -*- coding: utf-8 -*-
 # @Author: Cody Kochmann
 # @Date:   2018-02-28 14:11:34
-# @Last Modified 2018-03-01
-# @Last Modified time: 2018-03-01 11:07:07
+# @Last Modified 2018-03-02
+# @Last Modified time: 2018-03-02 18:09:27
 
 '''
 My take on how actors should be implemented for coroutines and functions.
 '''
 
-from multiprocessing.pool import ThreadPool
-from itertools import cycle
-from functools import partial, wraps
-from logging import warning
+from __future__ import print_function
 from collections import deque
-from math import sqrt
-import atexit
-from time import sleep
-from threading import Lock
+from functools import partial, wraps
 from inspect import isgenerator, isgeneratorfunction
+from itertools import cycle
+from logging import exception
+from math import sqrt
+from multiprocessing.pool import ThreadPool
+from threading import Lock
+from time import sleep
+import atexit
+import gc
 from generators import window, started
 from strict_functions import never_parallel
 
@@ -42,8 +44,7 @@ class Actor(object):
     send = __call__ # this is to support coroutine syntax
 
 class ActorManager(object):
-    def __init__(self, thread_count=8, logger=warning):
-        self.active_tasks = 0
+    def __init__(self, thread_count=8, logger=exception):
         self._active_tasks_lock = Lock()
         self.thread_count = thread_count
         self.logger = logger
@@ -52,7 +53,7 @@ class ActorManager(object):
             cycle(self.pools),
             self.pools_per_actor
         )
-        atexit.register(self.finish_tasks)
+        atexit.register(partial(self.finish_tasks, terminate=True))
 
     @property
     def pools_per_actor(self):
@@ -66,42 +67,37 @@ class ActorManager(object):
     def pool_count(self):
         return int(self.thread_count/self.threads_per_pool)
 
-    @staticmethod
-    def _run(fn, logger):
-        try:
-            return fn()
-        except Exception as ex:
-            logger(ex)
-            return None
-
-    def _remove_task(self, task_output):
-        with self._active_tasks_lock:
-            self.active_tasks -= 1
-        return task_output
-
-    def __call__(self, fn, pool):
-        with self._active_tasks_lock:
-            self.active_tasks += 1
-        return pool.apply_async(
-            self._run,
-            (fn, self.logger),
-            callback=self._remove_task
-        )
-
     @property
     def next_set_of_pools(self):
         return next(self.pool_selector)
+
+    @staticmethod
+    def _run(fn, logger):
+        try:
+            fn()
+        except Exception as ex:
+            logger(ex)
+
+    def __call__(self, fn, pool):
+        self.clear_caches()
+        pool.apply_async(
+            self._run,
+            (fn, self.logger)
+        )
+
+    def clear_caches(self):
+        for p in self.pools:
+            p._cache.clear()
 
     def terminate(self):
         for p in self.pools:
             p.terminate()
 
-    def finish_tasks(self):
-        while 0 < self.active_tasks:
-            print(self.active_tasks)
-            sleep(0.05)
-
-        self.terminate()
+    def finish_tasks(self, terminate=False):
+        while any(len(p._cache) for p in self.pools) or any(sum((p._inqueue.qsize(), p._outqueue.qsize(), p._taskqueue.qsize())) for p in self.pools):
+            sleep(0.1)
+        if terminate:
+            self.terminate()
 
     def actor(self, fn):
         ''' this is the main piece used to create new actors for an ActorManager '''
@@ -119,8 +115,10 @@ class ActorManager(object):
         return Actor(fn, self)
 
 if __name__ == '__main__':
-
     print('hi')
+
+    import resource
+    mem_usage = lambda:print(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss)
 
     m=ActorManager()
 
@@ -134,39 +132,28 @@ if __name__ == '__main__':
         f1(**locals())
         print('did', locals())
 
-    '''
-    for i in range(20):
+
+    for i in range(30):
         f2(i,i+1)
-    '''
 
-    '''
-    def print_with(a):
-        while 1:
-            i = yield
-            print(a,i)
+    actors = [m.actor(lambda i,x=x:print(i,x)) for x in range(10)]
 
-    printers = [print_with(i) for i in range(10)]
-    actors = [m.actor(i) for i in printers]
-
-    print(printers)
-    print(actors)
-
+    mem_usage()
     for a in actors:
         for i in range(10):
             a(i)
-    '''
+    mem_usage()
+
+    # recursion also plays nicely with actors
+
     @m.actor
-    def print_with(a):
-        while 1:
-            i = yield
-            print(a,i)
-            del i
+    def count_to_10000(starting_at):
+        if starting_at<10000:
+            mem_usage()
+            print(starting_at)
+            count_to_10000(starting_at+1)
 
-    printers = deque(map(print_with,range(1000)))
-
-    for p in printers:
-        for i in range(10):
-            p(i)
-            p.send(i)
-
+    #count_to_10000(0)
+    m.finish_tasks()
     print('done')
+    mem_usage()

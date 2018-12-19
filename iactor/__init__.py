@@ -26,7 +26,7 @@ from strict_functions import never_parallel
 __all__ = ['ActorManager']
 
 class Actor(object):
-    __slots__ = ['fn', 'pools', 'manager']
+    __slots__ = {'fn', 'pools', 'manager'}
 
     def __init__(self, fn, manager):
         assert callable(fn), 'fn needs to be callable'
@@ -36,6 +36,7 @@ class Actor(object):
         self.pools = cycle(self.manager.next_set_of_pools)
 
     def __call__(self, *args, **kwargs):
+        """adds the call along with the arguments to the next threadpool available"""
         return self.manager(
             partial(self.fn, *args, **kwargs),
             next(self.pools)
@@ -49,7 +50,7 @@ class ActorManager(object):
         self.thread_count = thread_count
         self.logger = logger
         self.pools = [ThreadPool(self.threads_per_pool) for _ in range(self.pool_count)]
-        self.pool_selector = window(
+        self.pool_selector = window(  # rotates the pools so tasks are balanced across threads
             cycle(self.pools),
             self.pools_per_actor
         )
@@ -57,28 +58,34 @@ class ActorManager(object):
 
     @property
     def pools_per_actor(self):
+        """returns the number of pools each actor can have access to"""
         return int(sqrt(self.thread_count))
 
     @property
     def threads_per_pool(self):
+        """returns the number of threads each threadpool can have access to"""
         return int(sqrt(self.thread_count))
 
     @property
     def pool_count(self):
+        """returns the number of pools this manager can have"""
         return int(self.thread_count/self.threads_per_pool)
 
     @property
     def next_set_of_pools(self):
+        """returns a set of threadpools that are assigned to the next given actor"""
         return next(self.pool_selector)
 
     @staticmethod
     def _run(fn, logger):
+        """where all actors technically are ran. this integrates the logger to each call so issues are tracable"""
         try:
             fn()
         except Exception as ex:
             logger(ex)
 
     def __call__(self, fn, pool):
+        """this keeps the caches of the threadpools clear while mapping the next task to the pools queue"""
         self.clear_caches()
         pool.apply_async(
             self._run,
@@ -86,14 +93,17 @@ class ActorManager(object):
         )
 
     def clear_caches(self):
+        """clears out task objects hanging around in the threadpool that arent needed anymore"""
         for p in self.pools:
             p._cache.clear()
 
     def terminate(self):
+        """deactivates each threadpool attached to this manager"""
         for p in self.pools:
             p.terminate()
 
     def finish_tasks(self, terminate=False):
+        """blocks the current thread until all actors are finished with their tasks"""
         while any(len(p._cache) for p in self.pools) or any(sum((p._inqueue.qsize(), p._outqueue.qsize(), p._taskqueue.qsize())) for p in self.pools):
             sleep(0.1)
         if terminate:
